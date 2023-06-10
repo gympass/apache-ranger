@@ -212,20 +212,14 @@ public class AtlasTagSource extends AbstractTagSource {
 										LOG.debug("Message-offset=" + message.getOffset() + ", Notification=" + getPrintableEntityNotification(notificationWrapper));
 									}
 
-									if (AtlasNotificationMapper.isNotificationHandled(notificationWrapper)) {
+									RangerAtlasEntityWithTags entityWithTags = new RangerAtlasEntityWithTags(notificationWrapper);
 
-										RangerAtlasEntityWithTags entityWithTags = new RangerAtlasEntityWithTags(notificationWrapper);
-
-										if ((notificationWrapper.getIsEntityDeleteOp() && !isHandlingDeleteOps) || (!notificationWrapper.getIsEntityDeleteOp() && isHandlingDeleteOps)) {
-											buildAndUploadServiceTags();
-											isHandlingDeleteOps = !isHandlingDeleteOps;
-										}
-
-										atlasEntitiesWithTags.add(entityWithTags);
-									} else {
-										AtlasNotificationMapper.logUnhandledEntityNotification(notificationWrapper);
+									if ((notificationWrapper.getIsEntityDeleteOp() && !isHandlingDeleteOps) || (!notificationWrapper.getIsEntityDeleteOp() && isHandlingDeleteOps)) {
+										buildAndUploadServiceTags();
+										isHandlingDeleteOps = !isHandlingDeleteOps;
 									}
 
+									atlasEntitiesWithTags.add(entityWithTags);
 									messages.add(message);
 								}
 							} else {
@@ -281,15 +275,13 @@ public class AtlasTagSource extends AbstractTagSource {
 					}
 					updateSink(entry.getValue());
 				}
+				offsetOfLastMessageDeliveredToRanger = messages.get(messages.size()-1).getOffset();
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Completed processing batch of messages of size:[" + messages.size() + "] received from NotificationConsumer");
+				}
+
+				commitToKafka();
 			}
-
-			offsetOfLastMessageDeliveredToRanger = messages.get(messages.size()-1).getOffset();
-
-			if (LOG.isDebugEnabled()) {
-				LOG.debug("Completed processing batch of messages of size:[" + messages.size() + "] received from NotificationConsumer");
-			}
-
-			commitToKafka();
 
 			atlasEntitiesWithTags.clear();
 			messages.clear();

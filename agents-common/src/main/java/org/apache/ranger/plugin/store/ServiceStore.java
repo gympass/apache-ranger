@@ -71,8 +71,6 @@ public interface ServiceStore {
 
 	RangerPolicy createPolicy(RangerPolicy policy) throws Exception;
 
-	RangerPolicy createDefaultPolicy(RangerPolicy policy) throws Exception;
-
 	RangerPolicy updatePolicy(RangerPolicy policy) throws Exception;
 
 	void deletePolicy(RangerPolicy policy, RangerService service) throws Exception;

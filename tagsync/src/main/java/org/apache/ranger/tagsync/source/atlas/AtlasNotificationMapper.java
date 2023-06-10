@@ -44,7 +44,7 @@ public class AtlasNotificationMapper {
     private static final    Logger              LOG                 = LoggerFactory.getLogger(AtlasNotificationMapper.class);
     private static          Map<String, Long>   unhandledEventTypes = new HashMap<>();
 
-    public static void logUnhandledEntityNotification(EntityNotificationWrapper entityNotification) {
+    private static void logUnhandledEntityNotification(EntityNotificationWrapper entityNotification) {
 
         boolean skipLogging = entityNotification.getIsEntityCreateOp() && entityNotification.getIsEmptyClassifications();
 
@@ -110,7 +110,7 @@ public class AtlasNotificationMapper {
         return ret;
     }
 
-    public static boolean isNotificationHandled(EntityNotificationWrapper entityNotification) {
+    static private boolean isNotificationHandled(EntityNotificationWrapper entityNotification) {
         boolean ret = false;
 
         EntityNotificationWrapper.NotificationOpType opType = entityNotification.getOpType();

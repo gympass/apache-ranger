@@ -28,13 +28,7 @@ import org.apache.ranger.util.CLIUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 public class PatchForExternalUserStatusUpdate_J10056 extends BaseLoader {
@@ -42,11 +36,7 @@ public class PatchForExternalUserStatusUpdate_J10056 extends BaseLoader {
 	private static final Logger logger = LoggerFactory.getLogger(PatchForExternalUserStatusUpdate_J10056.class);
 
 	@Autowired
-	private RangerDaoManager daoManager;
-
-	@Autowired
-	@Qualifier(value = "transactionManager")
-	PlatformTransactionManager txManager;
+	private RangerDaoManager rngrDaoMgr;
 
 	public static void main(String[] args) {
 		try {
@@ -80,27 +70,14 @@ public class PatchForExternalUserStatusUpdate_J10056 extends BaseLoader {
 	}
 
 	private void updateExternalUserStatus() {
-		XXPortalUserDao dao = this.daoManager.getXXPortalUser();
+		XXPortalUserDao dao = this.rngrDaoMgr.getXXPortalUser();
 		List<XXPortalUser> xXPortalUsers = dao.findByUserSourceAndStatus(RangerCommonEnums.USER_EXTERNAL,RangerCommonEnums.ACT_STATUS_DISABLED);
 
 		if(CollectionUtils.isNotEmpty(xXPortalUsers)) {
 			for (XXPortalUser xxPortalUser : xXPortalUsers) {
 				if (xxPortalUser != null) {
 					xxPortalUser.setStatus(RangerCommonEnums.ACT_STATUS_ACTIVE);
-					TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-					txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-					try {
-						txTemplate.execute(new TransactionCallback<Object>() {
-							@Override
-							public Object doInTransaction(TransactionStatus status) {
-								dao.update(xxPortalUser, true);
-								return null;
-							}
-						});
-					} catch (Throwable ex) {
-						logger.error("updateExternalUserStatus(): Failed to update DB for user: " + xxPortalUser.getLoginId() + " ", ex);
-						throw new RuntimeException(ex);
-					}
+					dao.update(xxPortalUser, true);
 				}
 			}
 		}

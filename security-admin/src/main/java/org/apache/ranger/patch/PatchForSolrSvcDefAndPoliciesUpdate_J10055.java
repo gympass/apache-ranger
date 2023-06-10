@@ -56,13 +56,7 @@ import org.apache.ranger.util.CLIUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @Component
 public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
@@ -95,10 +89,6 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
 
     @Autowired
     private RangerValidatorFactory validatorFactory;
-
-	@Autowired
-	@Qualifier(value = "transactionManager")
-	PlatformTransactionManager txManager;
 
     public static void main(String[] args) {
         logger.info("main()");
@@ -136,32 +126,20 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
                 System.exit(1);
             }
 
-			TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-			txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-			try {
-				txTemplate.execute(new TransactionCallback<Object>() {
-					@Override
-					public Object doInTransaction(TransactionStatus status) {
-						if (updateSolrSvcDef() == null) {
-							throw new RuntimeException("Error while updating " + SOLR_SVC_DEF_NAME + " service-def");
-						}
-						return null;
-					}
-				});
-			} catch (Throwable ex) {
-				logger.error("Error while updating " + SOLR_SVC_DEF_NAME + " service-def");
-				throw new RuntimeException("Error while updating " + SOLR_SVC_DEF_NAME + " service-def");
-			}
+            if (updateSolrSvcDef() != null) {
+                final Long resTypeSvcDefId =  embeddedSolrServiceDef.getId();
+                final Long tagSvcDefId = EmbeddedServiceDefsUtil.instance().getTagServiceDefId();
+                updateExistingRangerResPolicy(resTypeSvcDefId);
+                updateExistingRangerTagPolicies(tagSvcDefId);
 
-			final Long resTypeSvcDefId = embeddedSolrServiceDef.getId();
-			final Long tagSvcDefId = EmbeddedServiceDefsUtil.instance().getTagServiceDefId();
-			updateExistingRangerResPolicy(resTypeSvcDefId);
-			updateExistingRangerTagPolicies(tagSvcDefId);
-
-			deleteOldAccessTypeRefs(resTypeSvcDefId);
-			deleteOldAccessTypeRefs(tagSvcDefId);
+                deleteOldAccessTypeRefs(resTypeSvcDefId);
+                deleteOldAccessTypeRefs(tagSvcDefId);
+            } else {
+                logger.error("Error while updating " + SOLR_SVC_DEF_NAME + " service-def");
+                throw new RuntimeException("Error while updating " + SOLR_SVC_DEF_NAME + " service-def");
+            }
         } catch (Exception e) {
-            logger.error("Error whille executing PatchForSolrSvcDefAndPoliciesUpdate_J10055, Error - ", e);
+            logger.error("Error whille executing PatchForSolrSvcDefAndPoliciesUpdate_J10055 - ", e);
             System.exit(1);
         }
 
@@ -192,211 +170,160 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
 		logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateExistingRangerResPolicy(...)");
 	}
 
-	private void updateZoneResourceMapping(final XXService solrDBSvc) throws Exception {
-		logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateZoneResourceMapping(...)");
-		// Update Zone Resource Mapping For Solr Services
-		final String svcName = solrDBSvc.getName();
-		SearchFilter filter = new SearchFilter();
-		filter.setParam(SearchFilter.SERVICE_NAME, svcName);
-		List<RangerSecurityZone> secZoneList = this.secZoneDBStore.getSecurityZones(filter);
-		long index = 1;
-		for (RangerSecurityZone secZone : secZoneList) {
-			logger.info("updateZoneResourceMapping() processing: [" + index + "/" + secZoneList.size() + "]");
-			TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-			txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-			try {
-				txTemplate.execute(new TransactionCallback<Object>() {
-					@Override
-					public Object doInTransaction(TransactionStatus status) {
-						try {
-							updateZone(secZone, svcName);
-						} catch (Exception e) {
-							throw new RuntimeException(e);
-						}
-						return null;
-					}
-				});
-			} catch (Throwable ex) {
-				logger.error("updateZoneResourceMapping(): Failed to update zone: " + secZone.getName() + " ", ex);
-				throw new RuntimeException(ex);
-			}
-			index++;
-		}
-		logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateZoneResourceMapping(...)");
-	}
+    private void updateZoneResourceMapping(final XXService solrDBSvc) throws Exception {
+         logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateZoneResourceMapping(...)");
+        // Update Zone Resource Mapping For Solr Services
+        final String svcName = solrDBSvc.getName();
+        SearchFilter filter  = new SearchFilter();
+        filter.setParam(SearchFilter.SERVICE_NAME, svcName);
+        List<RangerSecurityZone> secZoneList = this.secZoneDBStore.getSecurityZones(filter);
+        for (RangerSecurityZone secZone : secZoneList) {
+            RangerSecurityZoneService           secZoneSvc                  = secZone.getServices().get(svcName);// get secZoneSvc only for this svcName
+            List<HashMap<String, List<String>>> solrZoneSvcResourcesMapList = secZoneSvc.getResources();
 
-	private void updateZone(RangerSecurityZone secZone, String svcName) throws Exception {
-		RangerSecurityZoneService secZoneSvc = secZone.getServices().get(svcName);// get secZoneSvc only for this svcName
-		List<HashMap<String, List<String>>> solrZoneSvcResourcesMapList = secZoneSvc.getResources();
+            final Set<HashMap<String, List<String>>> updatedResMapSet = new HashSet<HashMap<String, List<String>>>();
+            for (HashMap<String, List<String>> existingResMap : solrZoneSvcResourcesMapList) {
+                boolean isAllResource = false; // *
+                for (Map.Entry<String, List<String>> resNameValueListMap : existingResMap.entrySet()) {
 
-		final Set<HashMap<String, List<String>>> updatedResMapSet = new HashSet<HashMap<String, List<String>>>();
-		for (HashMap<String, List<String>> existingResMap : solrZoneSvcResourcesMapList) {
-			boolean isAllResource = false; // *
-			for (Map.Entry<String, List<String>> resNameValueListMap : existingResMap.entrySet()) {
+                    updatedResMapSet.add(existingResMap);
+                    final List<String> resourceValueList = resNameValueListMap.getValue();
 
-				updatedResMapSet.add(existingResMap);
-				final List<String> resourceValueList = resNameValueListMap.getValue();
+                    if (CollectionUtils.isNotEmpty(resourceValueList) && resourceValueList.indexOf("*") >= 0) {
+                        updatedResMapSet.clear();
+                        updatedResMapSet.add(existingResMap);
+                        isAllResource = true;
+                        break;
+                    } else {
+                        HashMap<String, List<String>> updatedResMap = new HashMap<String, List<String>>();
+                        updatedResMap.put(NEW_RESOURCE.schema.name(), resourceValueList);
+                        updatedResMapSet.add(updatedResMap);
+                    }
+                }
 
-				if (CollectionUtils.isNotEmpty(resourceValueList) && resourceValueList.indexOf("*") >= 0) {
-					updatedResMapSet.clear();
-					updatedResMapSet.add(existingResMap);
-					isAllResource = true;
-					break;
-				} else {
-					HashMap<String, List<String>> updatedResMap = new HashMap<String, List<String>>();
-					updatedResMap.put(NEW_RESOURCE.schema.name(), resourceValueList);
-					updatedResMapSet.add(updatedResMap);
-				}
-			}
+                if (isAllResource) {
+                    final List<String> allResVal = Arrays.asList("*");
+                    for (NEW_RESOURCE newRes : NEW_RESOURCE.values()) {
+                        HashMap<String, List<String>> updatedResMap = new HashMap<String, List<String>>();
+                        updatedResMap.put(newRes.name(), allResVal);
+                        updatedResMapSet.add(updatedResMap);
+                    }
+                    secZoneSvc.setResources(new ArrayList<HashMap<String, List<String>>>(updatedResMapSet));
+                    break;
+                }
+                secZoneSvc.setResources(new ArrayList<HashMap<String, List<String>>>(updatedResMapSet));
+            }
+            this.secZoneDBStore.updateSecurityZoneById(secZone);
+            logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateZoneResourceMapping(...)");
+        }
+    }
 
-			if (isAllResource) {
-				final List<String> allResVal = Arrays.asList("*");
-				for (NEW_RESOURCE newRes : NEW_RESOURCE.values()) {
-					HashMap<String, List<String>> updatedResMap = new HashMap<String, List<String>>();
-					updatedResMap.put(newRes.name(), allResVal);
-					updatedResMapSet.add(updatedResMap);
-				}
-				secZoneSvc.setResources(new ArrayList<HashMap<String, List<String>>>(updatedResMapSet));
-				break;
-			}
-			secZoneSvc.setResources(new ArrayList<HashMap<String, List<String>>>(updatedResMapSet));
-		}
-		this.secZoneDBStore.updateSecurityZoneById(secZone);
-	}
+    private void updateExistingRangerTagPolicies(Long svcDefId) throws Exception {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateExistingRangerTagPolicies(" + svcDefId + ")");
+        List<XXService> dbServices = daoMgr.getXXService().findByServiceDefId(svcDefId);
+        if (CollectionUtils.isNotEmpty(dbServices)) {
+            for (XXService dbService : dbServices) {
+                SearchFilter filter = new SearchFilter();
+                filter.setParam(SearchFilter.SERVICE_NAME, dbService.getName());
+                updateTagPolicies(svcDBStore.getServicePolicies(dbService.getId(), filter));
+            }
+        }
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateExistingRangerTagPolicies(" + svcDefId + ")");
+}
 
-	private void updateExistingRangerTagPolicies(Long svcDefId) throws Exception {
-		List<XXService> dbServices = daoMgr.getXXService().findByServiceDefId(svcDefId);
-		if (CollectionUtils.isNotEmpty(dbServices)) {
-			for (XXService dbService : dbServices) {
-				SearchFilter filter = new SearchFilter();
-				filter.setParam(SearchFilter.SERVICE_NAME, dbService.getName());
-				updateTagPolicies(svcDBStore.getServicePolicies(dbService.getId(), filter));
-			}
-		}
-	}
+    private void updateTagPolicies(List<RangerPolicy> tagServicePolicies) {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateTagPolicies(...)");
+        if (CollectionUtils.isNotEmpty(tagServicePolicies)) {
+            for (RangerPolicy exPolicy : tagServicePolicies) {
+                try {
+                    updateTagPolicyItemAccess(exPolicy.getPolicyItems());
+                    updateTagPolicyItemAccess(exPolicy.getAllowExceptions());
+                    updateTagPolicyItemAccess(exPolicy.getDenyPolicyItems());
+                    updateTagPolicyItemAccess(exPolicy.getDenyExceptions());
+                    this.svcDBStore.updatePolicy(exPolicy);
+                } catch (Exception e) {
+                    logger.error("Failed to apply the patch - ", e);
+                    System.exit(1);
+                }
+            }
+        }
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateTagPolicies(...)");
+    }
 
-	private void updateTagPolicies(List<RangerPolicy> tagServicePolicies) {
-		if (CollectionUtils.isNotEmpty(tagServicePolicies)) {
-			long index = 1;
-			for (RangerPolicy exPolicy : tagServicePolicies) {
-				logger.info("updateTagPolicies() processing: [" + index + "/" + tagServicePolicies.size() + "]");
-				TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-				txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-				try {
-					txTemplate.execute(new TransactionCallback<Object>() {
-						@Override
-						public Object doInTransaction(TransactionStatus status) {
-							updateTagPolicyItemAccess(exPolicy.getPolicyItems());
-							updateTagPolicyItemAccess(exPolicy.getAllowExceptions());
-							updateTagPolicyItemAccess(exPolicy.getDenyPolicyItems());
-							updateTagPolicyItemAccess(exPolicy.getDenyExceptions());
-							try {
-								svcDBStore.updatePolicy(exPolicy);
-							} catch (Exception e) {
-								throw new RuntimeException(e);
-							}
-							return null;
-						}
-					});
-				} catch (Throwable ex) {
-					logger.error("updateTagPolicies(): Failed to update policy: " + exPolicy.getName() + " ", ex);
-					throw new RuntimeException(ex);
-				}
-				index++;
-			}
-		}
-	}
+    private void updateResPolicies(List<RangerPolicy> policies) {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateResPolicies(...)");
+        if (CollectionUtils.isNotEmpty(policies)) {
+            for (RangerPolicy exPolicy : policies) {
+                // Filter policy items which are eligible for admin,config and schema resources
+                final List<RangerPolicy.RangerPolicyItem> filteredAllowPolciyItems  = filterPolicyItemsForAdminPermission(exPolicy.getPolicyItems());
+                final List<RangerPolicy.RangerPolicyItem> filteredAllowExcpPolItems = filterPolicyItemsForAdminPermission(exPolicy.getAllowExceptions());
+                final List<RangerPolicy.RangerPolicyItem> filteredDenyPolItems      = filterPolicyItemsForAdminPermission(exPolicy.getDenyPolicyItems());
+                final List<RangerPolicy.RangerPolicyItem> filteredDenyExcpPolItems  = filterPolicyItemsForAdminPermission(exPolicy.getDenyExceptions());
 
-	private void updateResPolicies(List<RangerPolicy> policies) {
-		if (CollectionUtils.isNotEmpty(policies)) {
-			long index = 1;
-			for (RangerPolicy exPolicy : policies) {
-				logger.info("updateResPolicies() processing: [" + index + "/" + policies.size() + "]");
-				TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-				txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-				try {
-					txTemplate.execute(new TransactionCallback<Object>() {
-						@Override
-						public Object doInTransaction(TransactionStatus status) {
-							createOrUpdatePolicy(exPolicy);
-							return null;
-						}
-					});
-				} catch (Throwable ex) {
-					logger.error("updateResPolicies(): Failed to create/update policy: " + exPolicy.getName() + " ", ex);
-					throw new RuntimeException(ex);
-				}
-				index++;
-			}
-		}
-	}
+                // check if there is a need to create additional policies with admin/config/schema resource(s)
+                final boolean splitPolicy = (filteredAllowPolciyItems.size() > 0 || filteredAllowExcpPolItems.size() > 0 || filteredDenyPolItems.size() > 0 || filteredDenyExcpPolItems.size() > 0);
+                if (splitPolicy) {
+                    RangerPolicy newPolicyForNewResource = new RangerPolicy();
+                    newPolicyForNewResource.setService(exPolicy.getService());
+                    newPolicyForNewResource.setServiceType(exPolicy.getServiceType());
+                    newPolicyForNewResource.setPolicyPriority(exPolicy.getPolicyPriority());
 
-	private void createOrUpdatePolicy(RangerPolicy exPolicy) {
-		// Filter policy items which are eligible for admin,config and schema resources
-		final List<RangerPolicy.RangerPolicyItem> filteredAllowPolciyItems = filterPolicyItemsForAdminPermission(exPolicy.getPolicyItems());
-		final List<RangerPolicy.RangerPolicyItem> filteredAllowExcpPolItems = filterPolicyItemsForAdminPermission(exPolicy.getAllowExceptions());
-		final List<RangerPolicy.RangerPolicyItem> filteredDenyPolItems = filterPolicyItemsForAdminPermission(exPolicy.getDenyPolicyItems());
-		final List<RangerPolicy.RangerPolicyItem> filteredDenyExcpPolItems = filterPolicyItemsForAdminPermission(exPolicy.getDenyExceptions());
+                    RangerPolicyResource newRes         = new RangerPolicyResource();
+                    boolean              isAllResources = false;
+                    // Only one entry expected
+                    for (Map.Entry<String, RangerPolicyResource> entry : exPolicy.getResources().entrySet()) {
+                        RangerPolicyResource exPolRes = entry.getValue();
+                        newRes.setIsExcludes(exPolRes.getIsExcludes());
+                        newRes.setIsRecursive(exPolRes.getIsRecursive());
+                        newRes.setValues(exPolRes.getValues());
+                        if (CollectionUtils.isNotEmpty(exPolRes.getValues()) && exPolRes.getValues().indexOf("*") >= 0) {
+                            isAllResources = true;
+                        }
+                    }
 
-		// check if there is a need to create additional policies with
-		// admin/config/schema resource(s)
-		final boolean splitPolicy = (filteredAllowPolciyItems.size() > 0 || filteredAllowExcpPolItems.size() > 0 || filteredDenyPolItems.size() > 0 || filteredDenyExcpPolItems.size() > 0);
-		if (splitPolicy) {
-			RangerPolicy newPolicyForNewResource = new RangerPolicy();
-			newPolicyForNewResource.setService(exPolicy.getService());
-			newPolicyForNewResource.setServiceType(exPolicy.getServiceType());
-			newPolicyForNewResource.setPolicyPriority(exPolicy.getPolicyPriority());
+                    newPolicyForNewResource.setPolicyItems(filteredAllowPolciyItems);
+                    newPolicyForNewResource.setAllowExceptions(filteredAllowExcpPolItems);
+                    newPolicyForNewResource.setDenyPolicyItems(filteredDenyPolItems);
+                    newPolicyForNewResource.setDenyExceptions(filteredDenyExcpPolItems);
+                    newPolicyForNewResource.setOptions(exPolicy.getOptions());
+                    newPolicyForNewResource.setValiditySchedules(exPolicy.getValiditySchedules());
+                    newPolicyForNewResource.setPolicyLabels(exPolicy.getPolicyLabels());
+                    newPolicyForNewResource.setConditions(exPolicy.getConditions());
+                    newPolicyForNewResource.setIsDenyAllElse(exPolicy.getIsDenyAllElse());
+                    newPolicyForNewResource.setZoneName(exPolicy.getZoneName());
 
-			RangerPolicyResource newRes = new RangerPolicyResource();
-			boolean isAllResources = false;
-			// Only one entry expected
-			for (Map.Entry<String, RangerPolicyResource> entry : exPolicy.getResources().entrySet()) {
-				RangerPolicyResource exPolRes = entry.getValue();
-				newRes.setIsExcludes(exPolRes.getIsExcludes());
-				newRes.setIsRecursive(exPolRes.getIsRecursive());
-				newRes.setValues(exPolRes.getValues());
-				if (CollectionUtils.isNotEmpty(exPolRes.getValues()) && exPolRes.getValues().indexOf("*") >= 0) {
-					isAllResources = true;
-				}
-			}
+                    try {
+                        if (isAllResources) {
+                            for (NEW_RESOURCE resType : NEW_RESOURCE.values()) {
+                                createNewPolicy(resType.name(), newPolicyForNewResource, newRes, exPolicy.getName());
+                            }
+                        } else {
+                            createNewPolicy(NEW_RESOURCE.schema.name(), newPolicyForNewResource, newRes, exPolicy.getName());
+                        }
 
-			newPolicyForNewResource.setPolicyItems(filteredAllowPolciyItems);
-			newPolicyForNewResource.setAllowExceptions(filteredAllowExcpPolItems);
-			newPolicyForNewResource.setDenyPolicyItems(filteredDenyPolItems);
-			newPolicyForNewResource.setDenyExceptions(filteredDenyExcpPolItems);
-			newPolicyForNewResource.setOptions(exPolicy.getOptions());
-			newPolicyForNewResource.setValiditySchedules(exPolicy.getValiditySchedules());
-			newPolicyForNewResource.setPolicyLabels(exPolicy.getPolicyLabels());
-			newPolicyForNewResource.setConditions(exPolicy.getConditions());
-			newPolicyForNewResource.setIsDenyAllElse(exPolicy.getIsDenyAllElse());
-			newPolicyForNewResource.setZoneName(exPolicy.getZoneName());
-
-			try {
-				if (isAllResources) {
-					for (NEW_RESOURCE resType : NEW_RESOURCE.values()) {
-						createNewPolicy(resType.name(), newPolicyForNewResource, newRes, exPolicy.getName());
-					}
-				} else {
-					createNewPolicy(NEW_RESOURCE.schema.name(), newPolicyForNewResource, newRes, exPolicy.getName());
-				}
-
-			} catch (Exception e) {
-				throw new RuntimeException(e);
-			}
-		}
-		try {
-			// update policy items
-			updateResPolicyItemAccess(exPolicy.getPolicyItems());
-			updateResPolicyItemAccess(exPolicy.getAllowExceptions());
-			updateResPolicyItemAccess(exPolicy.getDenyPolicyItems());
-			updateResPolicyItemAccess(exPolicy.getDenyExceptions());
-			this.svcDBStore.updatePolicy(exPolicy);
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
-	}
+                    } catch (Exception e) {
+                        logger.error("Failed to apply the patch - ", e);
+                        System.exit(1);
+                    }
+                }
+                try {
+                    // update policy items
+                    updateResPolicyItemAccess(exPolicy.getPolicyItems());
+                    updateResPolicyItemAccess(exPolicy.getAllowExceptions());
+                    updateResPolicyItemAccess(exPolicy.getDenyPolicyItems());
+                    updateResPolicyItemAccess(exPolicy.getDenyExceptions());
+                    this.svcDBStore.updatePolicy(exPolicy);
+                } catch (Exception e) {
+                    logger.error("Failed to apply the patch - ", e);
+                    System.exit(1);
+                }
+            }
+        }
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateResPolicies(...)");
+    }
 
     private void createNewPolicy(final String resType, final RangerPolicy newPolicy, final RangerPolicyResource newRes, final String exPolicyName) throws Exception {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.createNewPolicy(...)");
         final String newPolicyName = resType + " - '" + exPolicyName + "'";
         newPolicy.setName(newPolicyName);
         newPolicy.setDescription(newPolicyName);
@@ -407,9 +334,11 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
         newPolicy.setResourceSignature(null);
         newPolicy.setGuid(null);
         this.svcDBStore.createPolicy(newPolicy);
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.createNewPolicy(...)");
     }
 
     private void updateResPolicyItemAccess(List<RangerPolicyItem> policyItems) {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateResPolicyItemAccess(...)");
         Set<RangerPolicyItemAccess>         newRangerPolicyItemAccess = new HashSet<RangerPolicyItemAccess>();
         if (CollectionUtils.isNotEmpty(policyItems)) {
             for (RangerPolicyItem exPolicyItem : policyItems) {
@@ -439,9 +368,11 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
                 }
             }
         }
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateResPolicyItemAccess(...)");
     }
 
     private void updateTagPolicyItemAccess(List<RangerPolicyItem> policyItems) {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateTagPolicyItemAccess(...)");
         List<RangerPolicy.RangerPolicyItem> newPolicyItems            = new ArrayList<RangerPolicy.RangerPolicyItem>();
         Set<RangerPolicyItemAccess>         newRangerPolicyItemAccess = new HashSet<RangerPolicyItemAccess>();
         if (CollectionUtils.isNotEmpty(policyItems)) {
@@ -474,9 +405,11 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
                 }
             }
         }
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateTagPolicyItemAccess(...)");
     }
 
     private List<RangerPolicy.RangerPolicyItem> filterPolicyItemsForAdminPermission(List<RangerPolicy.RangerPolicyItem> policyItems) {
+        logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.filterPolicyItemsForAdminPermission(...)");
         // Add only those policy items who's access permission list contains 'solr_admin' permission
         List<RangerPolicy.RangerPolicyItem> filteredPolicyItems       = new ArrayList<RangerPolicy.RangerPolicyItem>();
         Set<RangerPolicyItemAccess>         newRangerPolicyItemAccess = new HashSet<RangerPolicyItemAccess>();
@@ -489,6 +422,7 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
                 filteredPolicyItems.add(newPolicyItem);
             }
         }));
+        logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.filterPolicyItemsForAdminPermission(...)");
         return filteredPolicyItems;
     }
 
@@ -505,7 +439,7 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
                 xXServiceDefObj = daoMgr.getXXServiceDef().findByName(SOLR_SVC_DEF_NAME);
                 if (xXServiceDefObj == null) {
                     logger.info(xXServiceDefObj + ": service-def not found. No patching is needed");
-                    System.exit(0);
+                    System.out.println(0);
                 }
 
                 embeddedSolrResourceDefs = embeddedSolrServiceDef.getResources();                 // ResourcesType
@@ -518,7 +452,6 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
             }
         } catch (Exception e) {
             logger.error("Error while updating " + SOLR_SVC_DEF_NAME + " service-def", e);
-            throw new RuntimeException(e);
         }
         logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateSolrSvcDef()");
         return ret;
@@ -550,7 +483,7 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
     }
 
 	private void updateServiceConfig(final XXService dbService) throws Exception {
-		logger.info("==> PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateServiceConfig()");
+
 		final RangerService rangerSvc = this.svcDBStore.getService(dbService.getId());
 		final Map<String, String> configMap = rangerSvc != null ? rangerSvc.getConfigs() : null;
 		Set<String> accessTypeSet = new HashSet<String>();
@@ -580,7 +513,6 @@ public class PatchForSolrSvcDefAndPoliciesUpdate_J10055 extends BaseLoader {
 			rangerSvc.setConfigs(configMap);
 			this.svcDBStore.updateService(rangerSvc, null);
 		}
-		logger.info("<== PatchForSolrSvcDefAndPoliciesUpdate_J10055.updateServiceConfig()");
 	}
 
 	private void updateDefaultAuditFilter(final String svcDefName) throws Exception {

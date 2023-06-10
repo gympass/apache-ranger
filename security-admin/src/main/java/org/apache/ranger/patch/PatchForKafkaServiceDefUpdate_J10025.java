@@ -21,7 +21,6 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.ranger.authorization.utils.JsonUtils;
 import org.apache.ranger.biz.RangerBizUtil;
 import org.apache.ranger.biz.ServiceDBStore;
-import org.apache.ranger.biz.XUserMgr;
 import org.apache.ranger.common.GUIDUtil;
 import org.apache.ranger.common.JSONUtil;
 import org.apache.ranger.common.RangerValidatorFactory;
@@ -52,13 +51,7 @@ import org.apache.ranger.util.CLIUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -114,13 +107,6 @@ public class PatchForKafkaServiceDefUpdate_J10025 extends BaseLoader {
 
 	@Autowired
 	ServiceDBStore svcStore;
-
-	@Autowired
-	XUserMgr xUserMgr;
-
-	@Autowired
-	@Qualifier(value = "transactionManager")
-	PlatformTransactionManager txManager;
 
 	public static void main(String[] args) {
 		logger.info("main()");
@@ -349,23 +335,7 @@ public class PatchForKafkaServiceDefUpdate_J10025 extends BaseLoader {
 						continue;
 					}
 					XXUser xxUser = daoMgr.getXXUser().findByUserName(user);
-					if (null == xxUser) {
-						TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-						txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-						try {
-							txTemplate.execute(new TransactionCallback<Object>() {
-								@Override
-								public Object doInTransaction(TransactionStatus status) {
-									xUserMgr.createServiceConfigUserSynchronously(user);
-									return null;
-								}
-							});
-						} catch (Exception exception) {
-							logger.error("Cannot create ServiceConfigUser(" + user + ")", exception);
-						}
-					}
-					xxUser = daoMgr.getXXUser().findByUserName(user);
-					if (null == xxUser) {
+					if (xxUser == null) {
 						throw new RuntimeException(user + ": user does not exist. policy='" + xxPolicy.getName()
 								+ "' service='" + xxPolicy.getService() + "' user='" + user + "'");
 					}

@@ -40,7 +40,6 @@ import java.util.Objects;
 import java.util.Set;
 
 import static org.apache.ranger.plugin.policyevaluator.RangerPolicyEvaluator.ACCESS_ALLOWED;
-import static org.apache.ranger.plugin.policyevaluator.RangerPolicyEvaluator.ACCESS_CONDITIONAL;
 import static org.apache.ranger.plugin.policyevaluator.RangerPolicyEvaluator.ACCESS_DENIED;
 
 public class RangerResourceACLs {
@@ -117,7 +116,7 @@ public class RangerResourceACLs {
 			accessResult = new AccessResult(access, policy);
 
 			userAccessInfo.put(accessType, accessResult);
-		} else if (access != ACCESS_CONDITIONAL) {
+		} else {
 			accessResult.setResult(access);
 			accessResult.setPolicy(policy);
 		}
@@ -138,7 +137,7 @@ public class RangerResourceACLs {
 			accessResult = new AccessResult(access, policy);
 
 			groupAccessInfo.put(accessType, accessResult);
-		} else if (access != ACCESS_CONDITIONAL) {
+		} else {
 			accessResult.setResult(access);
 			accessResult.setPolicy(policy);
 		}
@@ -159,7 +158,7 @@ public class RangerResourceACLs {
 			accessResult = new AccessResult(access, policy);
 
 			roleAccessInfo.put(accessType, accessResult);
-		} else if (access != ACCESS_CONDITIONAL) {
+		} else {
 			accessResult.setResult(access);
 			accessResult.setPolicy(policy);
 		}

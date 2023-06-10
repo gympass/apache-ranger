@@ -42,13 +42,7 @@ import org.apache.ranger.util.CLIUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -105,10 +99,6 @@ public class PatchForKafkaServiceDefUpdate_J10033 extends BaseLoader {
 
 	@Autowired
 	XUserMgr xUserMgr;
-
-	@Autowired
-	@Qualifier(value = "transactionManager")
-	PlatformTransactionManager txManager;
 
 	public static void main(String[] args) {
 		logger.info("main()");
@@ -362,35 +352,17 @@ public class PatchForKafkaServiceDefUpdate_J10033 extends BaseLoader {
 						continue;
 					}
 					XXUser xxUser = daoMgr.getXXUser().findByUserName(user);
-					Long userId = null;
 					if (xxUser == null) {
-						if (null == xxUser) {
-							logger.info(user +" user is not found, adding user: "+user);
-							TransactionTemplate txTemplate = new TransactionTemplate(txManager);
-							txTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-							try {
-								txTemplate.execute(new TransactionCallback<Object>() {
-									@Override
-									public Object doInTransaction(TransactionStatus status) {
-										xUserMgr.createServiceConfigUserSynchronously(user);
-										return null;
-									}
-								});
-							} catch(Exception exception) {
-								logger.error("Cannot create ServiceConfigUser(" + user + ")", exception);
-							}
-						}
-
+						logger.info(user +" user is not found, adding user: "+user);
+						xUserMgr.createServiceConfigUser(user);
 						xxUser = daoMgr.getXXUser().findByUserName(user);
 						if (xxUser == null) {
 							throw new RuntimeException(user + ": user does not exist. policy='" + xxPolicy.getName()
 							+ "' service='" + xxPolicy.getService() + "' user='" + user + "'");
 						}
 					}
-					userId = xxUser.getId();
-
 					XXPolicyItemUserPerm xUserPerm = new XXPolicyItemUserPerm();
-					xUserPerm.setUserId(userId);
+					xUserPerm.setUserId(xxUser.getId());
 					xUserPerm.setPolicyItemId(createdXXPolicyItem.getId());
 					xUserPerm.setOrder(i);
 					xUserPerm.setAddedByUserId(currentUserId);
