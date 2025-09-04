@@ -9,6 +9,6 @@
     "karma-phantomjs-launcher": "^1.0.4",
     "karma-requirejs": "^1.1.0",
     "mocha": "^5.2.0",
-    "requirejs": "^2.3.6"
+    "requirejs": "^2.3.7"
   }
 }
